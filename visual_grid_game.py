@@ -1,223 +1,114 @@
-"""Lab 02: run with --agent simple, --agent model, or --compare.
-Lab modifications are marked by step. Uses only the Python standard library.
-"""
+# visual_grid_game.py
+import random
 import argparse
+from agent import SearchAgent
 import tkinter as tk
-
-# LAB 02 - STEP 1.1: Heading is necessary for relative actions and wall_ahead.
-# North, East, South, West; grid Y increases upward.
-DIRECTIONS = ((0, 1), (1, 0), (0, -1), (-1, 0))
 
 
 class VisualGridHuntGame:
-    """Static Lab 02 comparison world, adapted from the Lab 01 environment.
+    """A flexible Pacman-style grid environment with support for configurable opponents and larger scales."""
 
-    Opponents are disabled to isolate the effect of agent memory.
-    Lab 01 traps and their penalties remain supported, but the comparison
-    uses no traps so penalties cannot obscure the architecture demonstration.
-    """
+    def __init__(self, width=10, height=10, num_food=10, num_opponents=2, custom_walls=None):
+        self.width = width
+        self.height = height
+        self.agent_pos = [0, 0]  # Starting position (x, y)
 
-    def __init__(self, width=7, height=7, walls=(), food=((3, 3),),
-                 traps=(), max_steps=300):
-        self.width, self.height = width, height
-        self.agent_pos = [0, 0]
-        self.facing = 0
-        self.walls = set(walls)
-        self.food_positions = set(food)
-        self.toxic_traps = set(traps)
+        if custom_walls is not None:
+            self.walls = set(custom_walls)
+        else:
+            # Generate some default scattered walls for a larger grid
+            self.walls = {(2, 2), (2, 3), (5, 5), (6, 5), (3, 7)}
+
+        # Dynamically generate random food positions avoiding walls and agent start
+        self.food_positions = set()
+        while len(self.food_positions) < num_food:
+            fx = random.randint(0, self.width - 1)
+            fy = random.randint(0, self.height - 1)
+            pos_tuple = (fx, fy)
+            if pos_tuple != (0, 0) and pos_tuple not in self.walls:
+                self.food_positions.add(pos_tuple)
+
+        # Generate adversarial opponents
         self.opponents = []
+        while len(self.opponents) < num_opponents:
+            ox = random.randint(0, self.width - 1)
+            oy = random.randint(0, self.height - 1)
+            op_pos = [ox, oy]
+            if tuple(op_pos) != (0, 0) and tuple(op_pos) not in self.walls and tuple(op_pos) not in self.food_positions:
+                self.opponents.append(op_pos)
+
         self.score = 0
         self.steps = 0
         self.collision = False
-        self.max_steps = max_steps
-        self.bumped = False
-        for cell in self.walls | self.food_positions | self.toxic_traps:
-            if not (0 <= cell[0] < width and 0 <= cell[1] < height):
-                raise ValueError("All cells must lie inside the grid")
-        if (0, 0) in self.walls | self.toxic_traps:
-            raise ValueError("The start must be safe")
-        if self.food_positions & self.walls or self.toxic_traps & (self.walls | self.food_positions):
-            raise ValueError("Walls, food and traps must not overlap")
 
-    # ===== LAB 02 - STEP 1.1: Local sensors only =====
-    def ahead(self):
-        dx, dy = DIRECTIONS[self.facing]
-        return self.agent_pos[0] + dx, self.agent_pos[1] + dy
-
-    def blocked(self, cell):
-        x, y = cell
-        return not (0 <= x < self.width and 0 <= y < self.height) or cell in self.walls
-
-    def get_percept(self):
-        # No global position, heading, map, food count or opponent coordinates.
-        # food_here checks the current cell; wall_ahead checks the next cell.
-        # bumped is local feedback about the previous movement attempt.
+    def get_percept(self) -> dict:
         return {
-            "wall_ahead": self.blocked(self.ahead()),
-            "food_here": tuple(self.agent_pos) in self.food_positions,
-            "bumped": self.bumped,
-            "smells_toxin": tuple(self.agent_pos) in self.toxic_traps,
+            'agent_pos': list(self.agent_pos),
+            'opponent_positions': [list(op) for op in self.opponents],
+            'smells_food': tuple(self.agent_pos) in self.food_positions,
+            'hit_wall': tuple(self.agent_pos) in self.walls,
+            'collision': self.collision,
+            'score': self.score,
+            'remaining_food': len(self.food_positions),
+            # LAB 03 - STEP 1.1: Expose the world model for offline search.
+            'grid_size': (self.width, self.height),
+            'walls': list(self.walls),
+            'all_food': list(self.food_positions)
         }
-    # ===== END STEP 1.1: Sensors =====
 
-    # ===== LAB 02 - STEP 1.1: Supporting relative actuators =====
-    def execute_action(self, action):
-        if action not in {"turn_left", "turn_right", "move_forward", "suck", "stay"}:
-            raise ValueError("Unknown action: " + str(action))
+    def execute_action(self, action: str):
         self.steps += 1
-        self.bumped = False
-        if action == "turn_left":
-            self.facing = (self.facing - 1) % 4
-        elif action == "turn_right":
-            self.facing = (self.facing + 1) % 4
-        elif action == "move_forward":
-            target = self.ahead()
-            if self.blocked(target):
-                self.bumped = True
-                self.score -= 5
-            else:
-                self.agent_pos = list(target)
-        elif action == "suck":
-            # Food is now collected explicitly, not automatically on movement.
-            cell = tuple(self.agent_pos)
-            if cell in self.food_positions:
-                self.food_positions.remove(cell)
-                self.score += 20
-        # Preserve Lab 01's once-per-action trap occupancy penalty.
-        if tuple(self.agent_pos) in self.toxic_traps:
-            self.score -= 15
-    # ===== END STEP 1.1: Actuators =====
+        new_pos = list(self.agent_pos)
 
-    def is_done(self):
-        # A finite limit lets us demonstrate a persistent loop safely.
-        return not self.food_positions or self.steps >= self.max_steps
+        if action == 'Up':
+            new_pos[1] = min(self.height - 1, new_pos[1] + 1)
+        elif action == 'Down':
+            new_pos[1] = max(0, new_pos[1] - 1)
+        elif action == 'Left':
+            new_pos[0] = max(0, new_pos[0] - 1)
+        elif action == 'Right':
+            new_pos[0] = min(self.width - 1, new_pos[0] + 1)
 
+        if tuple(new_pos) in self.walls:
+            self.score -= 5
+        else:
+            self.agent_pos = new_pos
 
-# ===== LAB 02 - STEP 1.2: Simple reflex architecture =====
-class SimpleReflexAgent:
-    # No __init__, previous action, visited set or other history.
-    def sense_and_act(self, percept):
-        if percept["food_here"]:          # Condition: food at current cell.
-            return "suck"                # Action: collect it.
-        if percept["wall_ahead"]:         # Condition: forward movement blocked.
-            return "turn_left"           # Action: turn 90 degrees left.
-        return "move_forward"            # Otherwise advance.
-# ===== END STEP 1.2 =====
+        tuple_pos = tuple(self.agent_pos)
+        if tuple_pos in self.food_positions:
+            self.food_positions.remove(tuple_pos)
+            self.score += 20
 
+        for op in self.opponents:
+            move = random.choice(['Up', 'Down', 'Left', 'Right', 'Stay'])
+            if move == 'Up' and op[1] < self.height - 1:
+                op[1] += 1
+            elif move == 'Down' and op[1] > 0:
+                op[1] -= 1
+            elif move == 'Left' and op[0] > 0:
+                op[0] -= 1
+            elif move == 'Right' and op[0] < self.width - 1:
+                op[0] += 1
 
-# ===== LAB 02 - STEP 1.3: Model-based reflex architecture =====
-class ModelBasedAgent:
-    def __init__(self):
-        # Relative frame: (0, 0) means "where I started", not a sensed location.
-        # Heading 0 means the initial direction; turns update this estimate.
-        self.position = (0, 0)
-        self.heading = 0
-        self.last_action = None
-        self.last_percept = None
-        self.visited_cells = set()
-        self.visit_counts = {}
-        self.observed_edges = {}  # (relative cell, heading) -> blocked boolean
-        self.target_heading = None
+            if op == self.agent_pos:
+                self.score -= 50
+                self.collision = True
 
-    def neighbour(self, heading):
-        dx, dy = DIRECTIONS[heading]
-        return self.position[0] + dx, self.position[1] + dy
-
-    def update_state(self, percept):
-        # TRANSITION MODEL: predict the effect of the previous action.
-        # The world is static; turns work reliably and movement is one cell.
-        if self.last_action == "turn_left":
-            self.heading = (self.heading - 1) % 4
-        elif self.last_action == "turn_right":
-            self.heading = (self.heading + 1) % 4
-        elif self.last_action == "move_forward" and not percept["bumped"]:
-            self.position = self.neighbour(self.heading)
-
-        # SENSOR MODEL: interpret local feedback in the estimated state.
-        # bumped=True prevents falsely recording a successful movement.
-        # wall_ahead describes the edge in front of this relative pose.
-        self.observed_edges[(self.position, self.heading)] = percept["wall_ahead"]
-        self.last_percept = dict(percept)
-        self.visited_cells.add(self.position)
-        if self.last_action is None or (self.last_action == "move_forward" and not percept["bumped"]):
-            self.visit_counts[self.position] = self.visit_counts.get(self.position, 0) + 1
-        if self.last_action == "move_forward":
-            self.target_heading = None
-
-    def remember_action(self, action):
-        self.last_action = action
-        return action
-
-    def sense_and_act(self, percept):
-        # Update memory BEFORE matching a condition-action rule.
-        self.update_state(percept)
-        if percept["food_here"]:
-            return self.remember_action("suck")
-
-        # IF some directions are unobserved, THEN turn to sense them.
-        # Four headings are inspected sequentially with the same front sensor.
-        if any((self.position, h) not in self.observed_edges for h in range(4)):
-            return self.remember_action("turn_right")
-
-        # IF a route has not been selected, THEN prefer the least visited
-        # open neighbour. Unvisited neighbours have count zero.
-        # This is a memory-conditioned rule, not a search through future paths.
-        if self.target_heading is None:
-            open_headings = [h for h in range(4)
-                             if not self.observed_edges[(self.position, h)]]
-            if not open_headings:
-                return self.remember_action("stay")
-            self.target_heading = min(
-                open_headings,
-                key=lambda h: (self.visit_counts.get(self.neighbour(h), 0),
-                               (h - self.heading) % 4))
-
-        # IF aligned with the selected route, THEN move; otherwise turn.
-        if self.heading == self.target_heading:
-            if percept["wall_ahead"]:
-                self.target_heading = None
-                return self.remember_action("turn_right")
-            return self.remember_action("move_forward")
-        if (self.target_heading - self.heading) % 4 == 3:
-            return self.remember_action("turn_left")
-        return self.remember_action("turn_right")
-# ===== END STEP 1.3 =====
-
-
-def make_demo():
-    # A U-shaped wall is inside the room. Reflex follows the outer boundary
-    # forever and misses the food inside the U. Both agents start identically.
-    walls = {(2, 2), (3, 2), (4, 2), (2, 3), (4, 3), (2, 4), (4, 4)}
-    return VisualGridHuntGame(walls=walls)
-
-
-def compare():
-    # Observer-only diagnostics: true coordinates NEVER enter either agent.
-    for agent_type in (SimpleReflexAgent, ModelBasedAgent):
-        env, agent = make_demo(), agent_type()
-        seen = {}
-        repeat = None
-        while not env.is_done():
-            signature = (tuple(env.agent_pos), env.facing, frozenset(env.food_positions))
-            if signature in seen and repeat is None:
-                repeat = (seen[signature], env.steps)
-            seen.setdefault(signature, env.steps)
-            env.execute_action(agent.sense_and_act(env.get_percept()))
-        print(f"{agent_type.__name__}: steps={env.steps}, score={env.score}, "
-              f"food_remaining={len(env.food_positions)}, first_repeated_world_state={repeat}")
+    def is_done(self) -> bool:
+        return len(self.food_positions) == 0 or self.steps >= 1000 or self.collision
 
 
 class GridGameGUI:
     """Tkinter wrapper that dynamically scales cell sizes to keep larger grids on screen."""
 
-    def __init__(self, root, agent_kind="simple"):
+    def __init__(self, root, active_algo="BFS"):
         self.root = root
-        self.root.title("SE3062 - Lab 02")
+        self.root.title("IT3012 - Scalable Multi-Agent Grid Hunt")
 
-        # LAB 02 - STEP 1.2 / 1.3: Both agents receive the same demonstration.
+        # LAB 03 - STEP 1.3: Identical static map for each algorithm.
         self.env = make_demo()
-        self.agent = SimpleReflexAgent() if agent_kind == "simple" else ModelBasedAgent()
-        self.root.title("Lab 02 - " + type(self.agent).__name__)
+        self.agent = SearchAgent(active_algo)
+        self.root.title("SE3062 Lab 03 - " + active_algo)
 
         # Dynamically calculate cell size so the total canvas fits nicely within a 600x600 window ceiling
         max_canvas_dim = 600
@@ -256,25 +147,6 @@ class GridGameGUI:
                     self.canvas.create_text(x1 + self.cell_size / 2, y1 + self.cell_size / 2, text="W", fill="white",
                                             font=("Arial", 8, "bold"))
 
-        # ===== LAB 01 - STEP 2.3 (B): Draw Toxic Traps =====
-        # Render each trap as a purple diamond, as required by the lab.
-        # Draw traps before characters so characters remain visible on top.
-        # These GUI shapes are visible to the human; they do not give the agent
-        # the full trap map through get_percept().
-        for tx, ty in self.env.toxic_traps:
-            # Convert the trap's grid location to the centre of its canvas cell.
-            # Invert Y because canvas coordinates increase downward.
-            cx = (tx + 0.5) * self.cell_size
-            cy = (self.env.height - ty - 0.5) * self.cell_size
-            # Scale the diamond to fit inside its cell.
-            radius = self.cell_size * 0.35
-            # Connect the top, right, bottom and left vertices of the diamond.
-            self.canvas.create_polygon(
-                cx, cy - radius, cx + radius, cy,
-                cx, cy + radius, cx - radius, cy,
-                fill="#9333ea", outline="#581c87")
-        # ===== END STEP 2.3 (B) =====
-
         for fx, fy in self.env.food_positions:
             offset = self.cell_size * 0.25
             x1 = fx * self.cell_size + offset
@@ -296,23 +168,16 @@ class GridGameGUI:
         self.canvas.create_oval(x1, y1, x1 + self.cell_size * 0.7, y1 + self.cell_size * 0.7, fill="#000066",
                                 outline="#1e3a8a")
 
-        # LAB 02 - STEP 1.1: Show heading to the human, not in the percept.
-        dx, dy = DIRECTIONS[self.env.facing]
-        cx = (ax + 0.5) * self.cell_size
-        cy = (self.env.height - ay - 0.5) * self.cell_size
-        self.canvas.create_line(cx, cy, cx + dx * self.cell_size * 0.3,
-                                cy - dy * self.cell_size * 0.3,
-                                fill="white", width=3, arrow=tk.LAST)
-
     def run_loop(self):
         self.btn.config(state="disabled")
 
         def step():
             if not self.env.is_done():
-                # LAB 02 - STEP 1.2 / 1.3: Replace random moves with the agent loop.
-                # Only the local percept is supplied; no environment reference.
-                percept = self.env.get_percept()
-                action = self.agent.sense_and_act(percept)
+                # LAB 03 - STEP 1.3: Execute a stored plan, not random moves.
+                action = self.agent.sense_and_act(self.env.get_percept())
+                if self.agent.status == 'No reachable food':
+                    self.label.config(text=self.agent.status)
+                    return
                 self.env.execute_action(action)
 
                 self.draw_grid()
@@ -326,14 +191,34 @@ class GridGameGUI:
         step()
 
 
+# LAB 03 - STEP 1.3: Reproducible comparison; no moving opponents.
+def make_demo():
+    env = VisualGridHuntGame(width=7, height=7, num_food=0,
+                             num_opponents=0, custom_walls={(2, 2), (2, 3), (2, 4)})
+    env.food_positions = {(3, 3)}
+    return env
+
+
+def compare():
+    for algorithm in ('BFS', 'DFS', 'UCS'):
+        env, agent = make_demo(), SearchAgent(algorithm)
+        while not env.is_done():
+            action = agent.sense_and_act(env.get_percept())
+            if agent.status == 'No reachable food':
+                break
+            env.execute_action(action)
+        print(f"{algorithm}: moves={env.steps}, score={env.score}, "
+              f"food_remaining={len(env.food_positions)}")
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--agent", choices=("simple", "model"), default="simple")
-    parser.add_argument("--compare", action="store_true", help="Run both agents without a GUI")
+    parser = argparse.ArgumentParser(description="Lab 03: BFS, DFS and UCS")
+    parser.add_argument('--algo', choices=['BFS', 'DFS', 'UCS'], default='BFS')
+    parser.add_argument('--compare', action='store_true')
     args = parser.parse_args()
     if args.compare:
         compare()
     else:
         root = tk.Tk()
-        app = GridGameGUI(root, agent_kind=args.agent)
+        app = GridGameGUI(root, args.algo)
         root.mainloop()
