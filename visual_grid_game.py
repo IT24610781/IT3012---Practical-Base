@@ -39,6 +39,21 @@ class VisualGridHuntGame:
         self.steps = 0
         self.collision = False
 
+        # ===== LAB 01 - STEP 2.1: Extend the Environment (E) =====
+        # Add toxic trap locations as (x, y) tuples in self.toxic_traps.
+        # Exclude the starting cell, walls and food, as required by the lab.
+        # Also exclude opponents' initial positions as an extra placement safeguard.
+        blocked = (self.walls | self.food_positions | {(0, 0)}
+                   | {tuple(op) for op in self.opponents})
+        # List all valid cells inside the grid before choosing trap locations.
+        available = [(x, y) for x in range(self.width)
+                     for y in range(self.height) if (x, y) not in blocked]
+        # Implementation choice: aim for num_food traps; the lab sets no trap count.
+        # Sampling without replacement prevents duplicate traps. min() caps the
+        # count at the available space, avoiding an endless placement loop.
+        self.toxic_traps = set(random.sample(available, min(num_food, len(available))))
+        # ===== END STEP 2.1 =====
+
     def get_percept(self) -> dict:
         return {
             'agent_pos': list(self.agent_pos),
@@ -47,7 +62,13 @@ class VisualGridHuntGame:
             'hit_wall': tuple(self.agent_pos) in self.walls,
             'collision': self.collision,
             'score': self.score,
-            'remaining_food': len(self.food_positions)
+            'remaining_food': len(self.food_positions),
+            # ===== LAB 01 - STEP 2.2: Extend the Sensors (S) =====
+            # True only when the agent's CURRENT cell contains a toxic trap.
+            # This reveals local danger, not nearby traps or the full trap map.
+            # An agent must use this percept to make better decisions (Question 10).
+            'smells_toxin': tuple(self.agent_pos) in self.toxic_traps
+            # ===== END STEP 2.2 =====
         }
 
     def execute_action(self, action: str):
@@ -72,6 +93,15 @@ class VisualGridHuntGame:
         if tuple_pos in self.food_positions:
             self.food_positions.remove(tuple_pos)
             self.score += 20
+
+        # ===== LAB 01 - STEP 2.3 (A): Update the Performance Measure (P) =====
+        # tuple_pos is the agent's position AFTER the movement attempt.
+        # Apply the required 15-point penalty if that position is a toxic trap.
+        # The trap remains active: an action ending on it is penalized again,
+        # even if the agent stayed in place or its movement was blocked.
+        if tuple_pos in self.toxic_traps:
+            self.score -= 15
+        # ===== END STEP 2.3 (A) =====
 
         for op in self.opponents:
             move = random.choice(['Up', 'Down', 'Left', 'Right', 'Stay'])
@@ -138,6 +168,25 @@ class GridGameGUI:
                 if self.cell_size >= 40 and (x, y) in self.env.walls:
                     self.canvas.create_text(x1 + self.cell_size / 2, y1 + self.cell_size / 2, text="W", fill="white",
                                             font=("Arial", 8, "bold"))
+
+        # ===== LAB 01 - STEP 2.3 (B): Draw Toxic Traps =====
+        # Render each trap as a purple diamond, as required by the lab.
+        # Draw traps before characters so characters remain visible on top.
+        # These GUI shapes are visible to the human; they do not give the agent
+        # the full trap map through get_percept().
+        for tx, ty in self.env.toxic_traps:
+            # Convert the trap's grid location to the centre of its canvas cell.
+            # Invert Y because canvas coordinates increase downward.
+            cx = (tx + 0.5) * self.cell_size
+            cy = (self.env.height - ty - 0.5) * self.cell_size
+            # Scale the diamond to fit inside its cell.
+            radius = self.cell_size * 0.35
+            # Connect the top, right, bottom and left vertices of the diamond.
+            self.canvas.create_polygon(
+                cx, cy - radius, cx + radius, cy,
+                cx, cy + radius, cx - radius, cy,
+                fill="#9333ea", outline="#581c87")
+        # ===== END STEP 2.3 (B) =====
 
         for fx, fy in self.env.food_positions:
             offset = self.cell_size * 0.25
