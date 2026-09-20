@@ -101,14 +101,15 @@ class VisualGridHuntGame:
 class GridGameGUI:
     """Tkinter wrapper that dynamically scales cell sizes to keep larger grids on screen."""
 
-    def __init__(self, root, active_algo="BFS"):
+    def __init__(self, root, active_algo="AStar", heuristic_type="manhattan"):
         self.root = root
         self.root.title("IT3012 - Scalable Multi-Agent Grid Hunt")
 
         # LAB 03 - STEP 1.3: Identical static map for each algorithm.
         self.env = make_demo()
-        self.agent = SearchAgent(active_algo)
-        self.root.title("SE3062 Lab 03 - " + active_algo)
+        # LAB 04 - STEP 1.3: Inject the A* capable search agent.
+        self.agent = SearchAgent(active_algo, heuristic_type)
+        self.root.title("SE3062 Lab 04 - " + active_algo)
 
         # Dynamically calculate cell size so the total canvas fits nicely within a 600x600 window ceiling
         max_canvas_dim = 600
@@ -200,7 +201,7 @@ def make_demo():
 
 
 def compare():
-    for algorithm in ('BFS', 'DFS', 'UCS'):
+    for algorithm in ('BFS', 'DFS', 'UCS', 'AStar'):
         env, agent = make_demo(), SearchAgent(algorithm)
         while not env.is_done():
             action = agent.sense_and_act(env.get_percept())
@@ -212,13 +213,14 @@ def compare():
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Lab 03: BFS, DFS and UCS")
-    parser.add_argument('--algo', choices=['BFS', 'DFS', 'UCS'], default='BFS')
+    parser = argparse.ArgumentParser(description="Lab 04: A* and heuristic functions")
+    parser.add_argument('--algo', choices=['BFS', 'DFS', 'UCS', 'AStar'], default='AStar')
     parser.add_argument('--compare', action='store_true')
+    parser.add_argument('--heuristic', choices=['manhattan', 'euclidean'], default='manhattan')
     args = parser.parse_args()
     if args.compare:
         compare()
     else:
         root = tk.Tk()
-        app = GridGameGUI(root, args.algo)
+        app = GridGameGUI(root, args.algo, args.heuristic)
         root.mainloop()
