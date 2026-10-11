@@ -4,6 +4,8 @@ import math
 from collections import deque
 import heapq
 from itertools import count
+# LAB 07 - STEP 3.1: Import the knowledge base.
+from logic_engine import KnowledgeBase
 
 
 class GreedyGridAgent:
@@ -23,6 +25,19 @@ class SearchAgent:
         self.heuristic_type = heuristic_type
         self.expanded_nodes = 0
         self.status = 'Ready'
+
+                # LAB 07 - STEP 3.1: Create the KB and permanent safety rules.
+        self.kb = KnowledgeBase()
+
+        self.kb.tell_rule(
+            ['TargetVisible', 'HasDust'],
+            'SafeToEngage'
+        )
+
+        self.kb.tell_rule(
+            ['SafeToEngage', 'BloodseekerMissing'],
+            'Retreat'
+        )
 
     # LAB 03 - STEP 1.2: Shared transition model; each legal move costs one unit.
     @staticmethod
@@ -111,43 +126,109 @@ class SearchAgent:
     # ===== END STEP 1.1 =====
 
     # ===== LAB 04 - STEP 1.2: A* graph search =====
-    def astar_search(self, start_pos, goal_pos, walls, grid_size,
-                     heuristic_type='manhattan'):
-        heuristics = {'manhattan': self.manhattan_distance,
-                      'euclidean': self.euclidean_distance}
+    # LAB 07 - STEP 3.2: A* checks physical and logical constraints.
+    def astar_search(
+        self,
+        start_pos,
+        goal_pos,
+        walls,
+        grid_size,
+        heuristic_type='manhattan',
+        tile_facts=None
+    ):
+        heuristics = {
+            'manhattan': self.manhattan_distance,
+            'euclidean': self.euclidean_distance
+        }
+
         if heuristic_type not in heuristics:
             raise ValueError('Choose manhattan or euclidean')
+
         heuristic = heuristics[heuristic_type]
-        start_pos, goal_pos = tuple(start_pos), tuple(goal_pos)
+
+        # LAB 07: Existing calls without tile facts still work.
+        if tile_facts is None:
+            tile_facts = {}
+
+        start_pos = tuple(start_pos)
+        goal_pos = tuple(goal_pos)
         walls = {tuple(w) for w in walls}
+
         self.expanded_nodes = 0
+
+        # Check that the start and goal are physically valid.
         for x, y in (start_pos, goal_pos):
-            if not (0 <= x < grid_size[0] and 0 <= y < grid_size[1]) or (x, y) in walls:
+            if (
+                not (0 <= x < grid_size[0] and 0 <= y < grid_size[1])
+                or (x, y) in walls
+            ):
                 return None
 
         frontier = []
-        reached_states = set()  # States closed AFTER popping from the queue.
-        best_g = {start_pos: 0}  # Avoid equal/worse duplicate frontier entries.
-        # Required tuple: (f_cost, g_cost, current_pos, path_taken).
-        heapq.heappush(frontier, (heuristic(start_pos, goal_pos), 0, start_pos, []))
+        reached_states = set()
+        best_g = {start_pos: 0}
+
+        heapq.heappush(
+            frontier,
+            (heuristic(start_pos, goal_pos), 0, start_pos, [])
+        )
+
         while frontier:
-            f_cost, g_cost, current_pos, path_taken = heapq.heappop(frontier)
-            if current_pos in reached_states or g_cost != best_g[current_pos]:
+            f_cost, g_cost, current_pos, path_taken = heapq.heappop(
+                frontier
+            )
+
+            if (
+                current_pos in reached_states
+                or g_cost != best_g[current_pos]
+            ):
                 continue
+
             if current_pos == goal_pos:
-                return path_taken  # Goal test on pop, not on generation.
+                return path_taken
+
             reached_states.add(current_pos)
-            self.expanded_nodes += 1  # Count successor expansions, excluding goal.
-            for neighbour, action in self.successors(current_pos, grid_size, walls):
+            self.expanded_nodes += 1
+
+            # successors() already excludes walls and out-of-bounds cells.
+            for neighbour, action in self.successors(
+                current_pos, grid_size, walls
+            ):
                 if neighbour in reached_states:
                     continue
-                g_new = g_cost + 1  # Four-way grid: each move costs 1.
+
+                # LAB 07: Clear facts from the previous tile.
+                # The permanent rules remain in the KB.
+                self.kb.clear_facts()
+
+                # LAB 07: Load only this neighbour's facts.
+                for fact in tile_facts.get(neighbour, []):
+                    self.kb.tell_fact(fact)
+
+                # LAB 07: Infer all conclusions supported by these facts.
+                self.kb.forward_chain()
+
+                # LAB 07: Reject logically unsafe tiles before insertion.
+                if 'Retreat' in self.kb.facts:
+                    continue
+
+                g_new = g_cost + 1
+
                 if g_new < best_g.get(neighbour, float('inf')):
                     best_g[neighbour] = g_new
                     h_new = heuristic(neighbour, goal_pos)
                     f_new = g_new + h_new
-                    heapq.heappush(frontier, (f_new, g_new, neighbour,
-                                               path_taken + [action]))
+
+                    heapq.heappush(
+                        frontier,
+                        (
+                            f_new,
+                            g_new,
+                            neighbour,
+                            path_taken + [action]
+                        )
+                    )
+
         return None
         # Closing states permanently is valid here: both supported heuristics
         # are consistent on the static four-way unit-cost grid. Arbitrary
@@ -192,9 +273,29 @@ class SearchAgent:
             # all_food contains coordinates; remaining_food is only a count.
             if self.active_algo in searches:
                 self.plan = searches[self.active_algo](start, goal, grid_size, walls)
+
             elif self.active_algo == 'AStar':
-                self.plan = self.astar_search(start, goal, walls, grid_size,
-                                               self.heuristic_type)
+                # LAB 07 - STEP 3.3: Sample facts supplied per tile.
+                tile_facts = {
+                    (1, 0): [
+                        'TargetVisible',
+                        'HasDust',
+                        'BloodseekerMissing'
+                    ],
+                    (0, 1): [
+                        'TargetVisible',
+                        'HasDust'
+                    ]
+                }
+
+                self.plan = self.astar_search(
+                    start,
+                    goal,
+                    walls,
+                    grid_size,
+                    heuristic_type=self.heuristic_type,
+                    tile_facts=tile_facts
+                )
             else:
                 raise ValueError('Choose BFS, DFS, UCS or AStar')
             if self.plan is None:
