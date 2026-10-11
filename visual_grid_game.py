@@ -1,5 +1,7 @@
 # visual_grid_game.py
 import random
+import argparse
+from agent import SearchAgent
 import tkinter as tk
 
 
@@ -47,7 +49,11 @@ class VisualGridHuntGame:
             'hit_wall': tuple(self.agent_pos) in self.walls,
             'collision': self.collision,
             'score': self.score,
-            'remaining_food': len(self.food_positions)
+            'remaining_food': len(self.food_positions),
+            # LAB 03 - STEP 1.1: Expose the world model for offline search.
+            'grid_size': (self.width, self.height),
+            'walls': list(self.walls),
+            'all_food': list(self.food_positions)
         }
 
     def execute_action(self, action: str):
@@ -89,18 +95,21 @@ class VisualGridHuntGame:
                 self.collision = True
 
     def is_done(self) -> bool:
-        return len(self.food_positions) == 0 or self.steps >= 60 or self.collision
+        return len(self.food_positions) == 0 or self.steps >= 1000 or self.collision
 
 
 class GridGameGUI:
     """Tkinter wrapper that dynamically scales cell sizes to keep larger grids on screen."""
 
-    def __init__(self, root, width=10, height=10, num_food=12, num_opponents=2, walls=None):
+    def __init__(self, root, active_algo="AStar", heuristic_type="manhattan"):
         self.root = root
         self.root.title("IT3012 - Scalable Multi-Agent Grid Hunt")
 
-        self.env = VisualGridHuntGame(width=width, height=height, num_food=num_food, num_opponents=num_opponents,
-                                      custom_walls=walls)
+        # LAB 03 - STEP 1.3: Identical static map for each algorithm.
+        self.env = make_demo()
+        # LAB 04 - STEP 1.3: Inject the A* capable search agent.
+        self.agent = SearchAgent(active_algo, heuristic_type)
+        self.root.title("SE3062 Lab 04 - " + active_algo)
 
         # Dynamically calculate cell size so the total canvas fits nicely within a 600x600 window ceiling
         max_canvas_dim = 600
@@ -165,7 +174,11 @@ class GridGameGUI:
 
         def step():
             if not self.env.is_done():
-                action = random.choice(['Up', 'Down', 'Left', 'Right'])
+                # LAB 03 - STEP 1.3: Execute a stored plan, not random moves.
+                action = self.agent.sense_and_act(self.env.get_percept())
+                if self.agent.status == 'No reachable food':
+                    self.label.config(text=self.agent.status)
+                    return
                 self.env.execute_action(action)
 
                 self.draw_grid()
@@ -174,13 +187,40 @@ class GridGameGUI:
             else:
                 end_text = f"Collision! Game Over! Final Score: {self.env.score}" if self.env.collision else f"Finished! Final Score: {self.env.score}"
                 self.label.config(text=end_text)
-                self.btn.config(state="normal")
+                self.btn.config(state="disabled")
 
         step()
 
 
+# LAB 03 - STEP 1.3: Reproducible comparison; no moving opponents.
+def make_demo():
+    env = VisualGridHuntGame(width=7, height=7, num_food=0,
+                             num_opponents=0, custom_walls={(2, 2), (2, 3), (2, 4)})
+    env.food_positions = {(3, 3)}
+    return env
+
+
+def compare():
+    for algorithm in ('BFS', 'DFS', 'UCS', 'AStar'):
+        env, agent = make_demo(), SearchAgent(algorithm)
+        while not env.is_done():
+            action = agent.sense_and_act(env.get_percept())
+            if agent.status == 'No reachable food':
+                break
+            env.execute_action(action)
+        print(f"{algorithm}: moves={env.steps}, score={env.score}, "
+              f"food_remaining={len(env.food_positions)}")
+
+
 if __name__ == "__main__":
-    root = tk.Tk()
-    # Try a larger grid size like 12x12 with 15 food and 3 opponents!
-    app = GridGameGUI(root, width=12, height=12, num_food=15, num_opponents=0)
-    root.mainloop()
+    parser = argparse.ArgumentParser(description="Lab 04: A* and heuristic functions")
+    parser.add_argument('--algo', choices=['BFS', 'DFS', 'UCS', 'AStar'], default='AStar')
+    parser.add_argument('--compare', action='store_true')
+    parser.add_argument('--heuristic', choices=['manhattan', 'euclidean'], default='manhattan')
+    args = parser.parse_args()
+    if args.compare:
+        compare()
+    else:
+        root = tk.Tk()
+        app = GridGameGUI(root, args.algo, args.heuristic)
+        root.mainloop()
